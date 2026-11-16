@@ -1,0 +1,54 @@
+# Optional: not a required check.
+name: k4unit tests (optional)
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  k4unit:
+    runs-on: ubuntu-24.04
+    env:
+      AREAS: >-
+        chainedtp dataaccess/checkinputs dataaccess/common dataaccess/extractqueryparam
+        dataaccess/gwquerytest dataaccess/queryorder merge/tplogreplay merge/wdb
+        stp/batching stp/custommode stp/eod stp/exit stp/housekeeping
+        stp/periodend stp/pubsub stp/recovery stp/strsub stp/subfile stp/subscription stp/tickerlog
+        stp/tpvalidation stp/tz stp/wdb wdb/nullpartbyenum
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: DataIntellectTech/TorQ-Finance-Starter-Pack
+          ref: 50fcd5ad6d8e50fcd71965010ce38a1fccdad87b
+          path: fsp
+          persist-credentials: false
+      - run: (cd fsp && tar cf - --exclude=.git .) | tar xf - --skip-old-files && rm -rf fsp
+      - id: pq
+        uses: peachq-org/setup-peachq@v1.0.0
+        with:
+          version: 0.92.20261116
+          add-to-path: true
+          args: -classic
+      - run: sudo apt-get install -y --no-install-recommends rlwrap
+      - run: |
+          for a in $AREAS; do
+            timeout -k 10 600 bash -c ". ./setenv.sh && bash tests/$a/run.sh -r $(date -u +%Y.%m.%dD%T) -wq" < /dev/null || true
+            pkill -KILL -f "$PWD/torq.q" || true
+          done
+      - shell: bash
+        run: |
+          cat > "$RUNNER_TEMP/count.q" <<'Q'
+          r:raze{("PSIISSBSJJBBBBI";enlist csv)0:hsym`$x}each system"find tests -name results_*.csv";
+          -1 string[sum r`ok]," of ",string[count r]," k4unit tests pass";
+          exit`int$650>sum r`ok
+          Q
+          q "$RUNNER_TEMP/count.q" < /dev/null | tee out.txt
+          echo "**peachq ${{ steps.pq.outputs.version }}:** $(tail -1 out.txt)" >> "$GITHUB_STEP_SUMMARY"
